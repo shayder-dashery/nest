@@ -17,5 +17,6 @@
         "workbench.iconTheme": "material-icon-theme"
       }
     }
-  }
+  },
+  "postCreateCommand": "npm install"
 }

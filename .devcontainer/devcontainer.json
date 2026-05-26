@@ -1,0 +1,21 @@
+{
+  "name": "NestJS",
+
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Postman.postman-for-vscode",
+        "qwtel.sqlite-viewer",
+        "PKief.material-icon-theme",
+        "esbenp.prettier-vscode"
+      ],
+
+      "settings": {
+        "editor.formatOnSave": true,
+        "workbench.iconTheme": "material-icon-theme"
+      }
+    }
+  }
+}

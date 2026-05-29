@@ -1,14 +1,18 @@
-import {Body, Controller, Post, HttpCode, HttpStatus} from "@nestjs/common";
-import { LoginService } from "./login.service";
+import { Body, Controller, Post, HttpCode, HttpStatus } from '@nestjs/common';
+import { LoginService } from './login.service';
 
-@Controller("login")
+@Controller('login')
 export class LoginController {
-    constructor(private loginService: LoginService) { }
+  constructor(private loginService: LoginService) {}
 
-    @Post()
-    @HttpCode(HttpStatus.OK)
-    async login(@Body() body: { email: string, password: string }): Promise<{ message: string, status: string, user: { id: number, email: string } }> {
-        const { email, password } = body;
-        return this.loginService.login(email, password);
-    }
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  async login(@Body() body: { email: string; password: string }): Promise<{
+    message: string;
+    status: string;
+    access_token: string;
+  }> {
+    const { email, password } = body;
+    return this.loginService.login(email, password);
+  }
 }

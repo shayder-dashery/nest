@@ -1,6 +1,6 @@
-export class CreateUser{
-    primeiroNome : string;
-    sobrenome : string;
-    email : string;
-    senha : string;
+export enum UserRole {
+  ADMIN = 'admin',
+  CUSTOMER = 'customer',
+  RESTAURANT = 'restaurant',
+  DELIVERY = 'delivery',
 }

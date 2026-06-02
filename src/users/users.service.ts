@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
 import { User } from "../models/user.model";
-import { CreateUser } from "./userType";
+import { CreateUserDto } from "./dto/create-user.dto";
 import * as bcrypt from 'bcrypt'
 
 @Injectable()
@@ -12,8 +12,8 @@ export class UsersService {
         return this.userModel.findAll()
     }
 
-    async create(createUser: CreateUser): Promise<User> {
-        const hashedPassword = await bcrypt.hash(createUser.senha, 10);
-        return this.userModel.create({ ...createUser, senha: hashedPassword });
+    async create(createUserDto: CreateUserDto): Promise<User> {
+        const hashedPassword = await bcrypt.hash(createUserDto.senha, 10);
+        return this.userModel.create({ ...createUserDto, senha: hashedPassword });
     }
 }

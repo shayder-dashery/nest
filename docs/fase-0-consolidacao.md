@@ -24,6 +24,8 @@ npm install class-validator class-transformer
 
 ```typescript
 // src/main.ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
@@ -37,8 +39,10 @@ async function bootstrap() {
     }),
   );
 
+  app.enableCors();
   await app.listen(3000);
 }
+bootstrap();
 ```
 
 **2. Criar `src/users/dto/create-user.dto.ts`:**
@@ -68,11 +72,26 @@ export class CreateUserDto {
 
 ```typescript
 // src/users/users.controller.ts
+import { Get, Post, Body, Controller, UseGuards } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { User } from '../models/user.model';
+import { CreateUser } from './userType';
+import { AuthGuard } from '../auth/auth.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+  @UseGuards(AuthGuard)
+  @Get()
+  findAll(): Promise<User[]> {
+    return this.usersService.findAll();
+  }
 
 @Post()
 create(@Body() createUserDto: CreateUserDto) {
   return this.usersService.create(createUserDto);
+}
 }
 ```
 
@@ -134,9 +153,27 @@ export class HttpExceptionFilter implements ExceptionFilter {
 **2. Registrar globalmente no `main.ts`:**
 
 ```typescript
+import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
-app.useGlobalFilters(new HttpExceptionFilter());
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // remove campos não declarados no DTO
+      forbidNonWhitelisted: true, // lança erro se campos extras forem enviados
+      transform: true, // converte tipos automaticamente (ex: string -> number)
+    }),
+  );
+
+  app.useGlobalFilters(new HttpExceptionFilter());
+  app.enableCors();
+  await app.listen(3000);
+}
+bootstrap()
 ```
 
 ### Formato de resposta de erro padronizado
@@ -181,12 +218,25 @@ npm install @nestjs/swagger swagger-ui-express
 **1. Configurar o Swagger no `main.ts`:**
 
 ```typescript
+// src/main.ts
+import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // ... pipes e filtros já configurados
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // remove campos não declarados no DTO
+      forbidNonWhitelisted: true, // lança erro se campos extras forem enviados
+      transform: true, // converte tipos automaticamente (ex: string -> number)
+    }),
+  );
+
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   const config = new DocumentBuilder()
     .setTitle('Delivery API')
@@ -198,13 +248,16 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
+  app.enableCors();
   await app.listen(3000);
 }
+bootstrap();
 ```
 
 **2. Adicionar decorators nos DTOs:**
 
 ```typescript
+import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateUserDto {
@@ -230,6 +283,12 @@ export class CreateUserDto {
 **3. Adicionar decorators nos controllers:**
 
 ```typescript
+import { Get, Post, Body, Controller, UseGuards } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { User } from '../models/user.model';
+import { CreateUser } from './userType';
+import { AuthGuard } from '../auth/auth.guard';
+import { CreateUserDto } from './dto/create-user.dto';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -240,13 +299,20 @@ import {
 @ApiTags('Usuários')
 @Controller('users')
 export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
   @ApiOperation({ summary: 'Listar todos os usuários' })
   @ApiResponse({ status: 200, description: 'Lista retornada com sucesso' })
   @ApiBearerAuth()
   @UseGuards(AuthGuard)
   @Get()
-  findAll() {
+  findAll(): Promise<User[]> {
     return this.usersService.findAll();
+  }
+
+  @Post()
+  create(@Body() createUserDto: CreateUserDto) {
+    return this.usersService.create(createUserDto);
   }
 }
 ```
@@ -282,38 +348,92 @@ export class UpdateUserDto extends PartialType(CreateUserDto) {}
 **2. Adicionar `update` e `remove` no `users.service.ts`:**
 
 ```typescript
-async update(id: number, updateUserDto: UpdateUserDto): Promise<User> {
-  const user = await User.findByPk(id);
-  if (!user) throw new NotFoundException('Usuário não encontrado');
+import { Injectable, NotFoundException } from "@nestjs/common";
+import { InjectModel } from "@nestjs/sequelize";
+import { User } from "../models/user.model";
+import { CreateUserDto } from "./dto/create-user.dto";
+import { UpdateUserDto } from "./dto/update-user.dto";
+import * as bcrypt from 'bcrypt'
 
-  if (updateUserDto.senha) {
-    updateUserDto.senha = await bcrypt.hash(updateUserDto.senha, 10);
-  }
+@Injectable()
+export class UsersService {
+    constructor(@InjectModel(User) private userModel: typeof User) { }
 
-  await user.update(updateUserDto);
-  return user;
-}
+    findAll(): Promise<User[]> {
+        return this.userModel.findAll()
+    }
 
-async remove(id: number): Promise<void> {
-  const user = await User.findByPk(id);
-  if (!user) throw new NotFoundException('Usuário não encontrado');
+    async create(createUserDto: CreateUserDto): Promise<User> {
+        const hashedPassword = await bcrypt.hash(createUserDto.senha, 10);
+        return this.userModel.create({ ...createUserDto, senha: hashedPassword });
+    }
+    async update(id: number, updateUserDto: UpdateUserDto): Promise<User> {
+        const user = await User.findByPk(id);
+        if (!user) throw new NotFoundException('Usuário não encontrado');
 
-  await user.destroy(); // soft delete se o model tiver o campo deletedAt
+        if (updateUserDto.senha) {
+            updateUserDto.senha = await bcrypt.hash(updateUserDto.senha, 10);
+        }
+
+        await user.update(updateUserDto);
+        return user;
+    }
+
+    async remove(id: number): Promise<void> {
+        const user = await User.findByPk(id);
+        if (!user) throw new NotFoundException('Usuário não encontrado');
+
+        await user.destroy(); // soft delete se o model tiver o campo deletedAt
+    }
 }
 ```
 
 **3. Adicionar as rotas no `users.controller.ts`:**
 
 ```typescript
-@Patch(':id')
-update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-  return this.usersService.update(+id, updateUserDto);
+import { Get, Post, Body, Controller, UseGuards, Param, Delete, Patch } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { User } from '../models/user.model';
+import { AuthGuard } from '../auth/auth.guard';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
+
+@ApiTags('Usuários')
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) { }
+
+  @ApiOperation({ summary: 'Listar todos os usuários' })
+  @ApiResponse({ status: 200, description: 'Lista retornada com sucesso' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get()
+  findAll(): Promise<User[]> {
+    return this.usersService.findAll();
+  }
+
+  @Post()
+  create(@Body() createUserDto: CreateUserDto) {
+    return this.usersService.create(createUserDto);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+    return this.usersService.update(+id, updateUserDto);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.usersService.remove(+id);
+  }
 }
 
-@Delete(':id')
-remove(@Param('id') id: string) {
-  return this.usersService.remove(+id);
-}
 ```
 
 ### Conceito ensinado
@@ -347,13 +467,34 @@ export enum UserRole {
 **2. Adicionar o campo `role` no `user.model.ts`:**
 
 ```typescript
+
+import { Column, DataType, Model, Table } from 'sequelize-typescript';
 import { UserRole } from '../users/userType';
 
-@Column({
-  type: DataType.ENUM(...Object.values(UserRole)),
-  defaultValue: UserRole.CUSTOMER,
-})
-role: UserRole;
+@Table
+export class User extends Model {
+  @Column
+  primeiroNome: string;
+
+  @Column
+  sobrenome: string;
+
+  @Column({ unique: true })
+  email: string;
+
+  @Column
+  senha: string;
+
+  @Column({ defaultValue: true, allowNull: false })
+  ativo: boolean;
+
+  @Column({
+    type: DataType.ENUM(...Object.values(UserRole)),
+    defaultValue: UserRole.CUSTOMER,
+  })
+  role: UserRole;
+}
+
 ```
 
 **3. Criar o decorator `@Roles()` em `src/auth/roles.decorator.ts`:**
@@ -395,12 +536,53 @@ export class RolesGuard implements CanActivate {
 **5. Usar o guard e o decorator nas rotas:**
 
 ```typescript
-// Rota acessível apenas por admins
-@Roles(UserRole.ADMIN)
-@UseGuards(AuthGuard, RolesGuard)
-@Delete(':id')
-remove(@Param('id') id: string) {
-  return this.usersService.remove(+id);
+import { Get, Post, Body, Controller, UseGuards, Param, Delete, Patch } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { User } from '../models/user.model';
+import { AuthGuard } from '../auth/auth.guard';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
+import { Roles } from 'src/auth/roles.decorator';
+import { UserRole } from './userType';
+import { RolesGuard } from 'src/auth/roles.guard';
+
+@ApiTags('Usuários')
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) { }
+
+  @ApiOperation({ summary: 'Listar todos os usuários' })
+  @ApiResponse({ status: 200, description: 'Lista retornada com sucesso' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get()
+  findAll(): Promise<User[]> {
+    return this.usersService.findAll();
+  }
+
+  @Post()
+  create(@Body() createUserDto: CreateUserDto) {
+    return this.usersService.create(createUserDto);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+    return this.usersService.update(+id, updateUserDto);
+  }
+
+  // Rota acessível apenas por admins
+  @Roles(UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.usersService.remove(+id);
+  }
 }
 ```
 

@@ -7,6 +7,7 @@ import { InjectModel } from '@nestjs/sequelize';
 import * as bcrypt from 'bcrypt';
 import { User } from '../models/user.model';
 import { JwtService } from '@nestjs/jwt';
+import { LoginDto } from './dto/login.dto';
 
 @Injectable()
 export class LoginService {
@@ -15,14 +16,13 @@ export class LoginService {
     private jwtService: JwtService,
   ) {}
 
-  async login(
-    email: string,
-    password: string,
-  ): Promise<{
+  async login(loginDto: LoginDto): Promise<{
     message: string;
     status: string;
     access_token: string;
   }> {
+    const { email, password } = loginDto;
+
     const findOneByEmail = async (email: string): Promise<User | null> => {
       return this.userModel.findOne({ where: { email } });
     };

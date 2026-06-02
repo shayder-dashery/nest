@@ -3,6 +3,14 @@
 
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
 
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  "forwardPorts": [6379],
+
+  "postCreateCommand": "npm install && docker run -d --name redis -p 6379:6379 redis:alpine",
+
   "customizations": {
     "vscode": {
       "extensions": [
@@ -17,6 +25,5 @@
         "workbench.iconTheme": "material-icon-theme"
       }
     }
-  },
-  "postCreateCommand": "npm install"
+  }
 }

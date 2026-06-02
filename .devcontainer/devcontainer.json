@@ -1,15 +1,13 @@
 {
   "name": "NestJS",
 
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "dockerComposeFile": "docker-compose.yml",
 
-  "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
-  },
+  "service": "app",
+
+  "workspaceFolder": "/workspace",
 
   "forwardPorts": [6379],
-
-  "postCreateCommand": "npm install && docker run -d --name redis -p 6379:6379 redis:alpine",
 
   "customizations": {
     "vscode": {
@@ -25,5 +23,7 @@
         "workbench.iconTheme": "material-icon-theme"
       }
     }
-  }
+  },
+
+  "postCreateCommand": "sudo apt update && sudo apt install -y redis-tools iputils-ping curl && npm install"
 }

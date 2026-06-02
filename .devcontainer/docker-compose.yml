@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/javascript-node:22
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+
+  redis:
+    image: redis:alpine

@@ -85,8 +85,35 @@ export class Restaurant extends Model {
 **2. Registrar no `AppModule` (array `models` do SequelizeModule):**
 
 ```typescript
-// src/app.module.ts
-models: [User, Restaurant, Product, Order, OrderItem],
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { User } from './models/user.model';
+import { UsersModule } from './users/users.module';
+import { LoginModule } from './login/login.module';
+import { Restaurant } from './models/restaurant.model';
+import { Product } from './models/product.model';
+import { Order } from './models/order.model';
+import { OrderItem } from './models/order-item.model';
+
+@Module({
+  imports: [
+    SequelizeModule.forRoot({
+      dialect: 'sqlite',
+      storage: './database.sqlite',
+      autoLoadModels: true,
+      synchronize: true,
+      models: [User, Restaurant, Product, Order, OrderItem],
+    }),
+    UsersModule,
+    LoginModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+
 ```
 
 ### Conceito ensinado
@@ -140,6 +167,15 @@ export class CreateRestaurantDto {
   @IsOptional()
   descricao?: string;
 }
+```
+
+**1.2. Criar `src/restaurants/dto/update-restaurant.dto.ts`:**
+
+```typescript
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateRestaurantDto } from './create-restaurant.dto';
+
+export class UpdateRestaurantDto extends PartialType(CreateRestaurantDto) {}
 ```
 
 **2. Criar `src/restaurants/restaurants.service.ts`:**
@@ -277,6 +313,23 @@ export class RestaurantsController {
 }
 ```
 
+**4. Criar `src/restaurants/restaurants.module.ts`:**
+
+```typescript
+import { Module } from '@nestjs/common';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { Restaurant } from '../models/restaurant.model';
+import { RestaurantsController } from './restaurants.controller';
+import { RestaurantsService } from './restaurants.service';
+
+@Module({
+  imports: [SequelizeModule.forFeature([Restaurant])],
+  controllers: [RestaurantsController],
+  providers: [RestaurantsService],
+})
+export class RestaurantsModule {}
+```
+
 ### Conceito ensinado
 
 - `@Request() req` para acessar o usuário logado dentro do controller
@@ -328,9 +381,216 @@ export class Product extends Model {
 }
 ```
 
-**2. Criar o módulo `Products` seguindo a mesma estrutura do `Restaurants`.**
+**2. Criar /src/products/dto/create-product.dto.ts:**
 
-> Desafio para os alunos: implementar o CRUD de `Product` com base no que foi feito para `Restaurant`.
+```typescript
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+
+export class CreateProductDto {
+  @ApiProperty({ example: 'Pizza Margherita' })
+  @IsString()
+  @IsNotEmpty()
+  nome: string;
+
+  @ApiProperty({ example: 'Tomate, mussarela e manjericão', required: false })
+  @IsString()
+  @IsOptional()
+  descricao?: string;
+
+  @ApiProperty({ example: 29.90 })
+  @IsNumber()
+  preco: number;
+
+  @ApiProperty({ example: 'http://example.com/pizza.jpg', required: false })
+  @IsString()
+  @IsOptional()
+  imagemUrl?: string;
+
+  @ApiProperty({ example: true, default: true })
+  disponivel?: boolean;
+}
+```
+
+**3. Criar `src/products/dto/update-product.dto.ts`:**
+
+```typescript
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateProductDto } from './create-product.dto';
+
+export class UpdateProductDto extends PartialType(CreateProductDto) {}
+```
+
+**4 Criar `src/products/products.service.ts`**
+
+```typescript
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Product } from '../models/product.model';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+import { Restaurant } from '../models/restaurant.model';
+
+@Injectable()
+export class ProductsService {
+  constructor(
+    @InjectModel(Product)
+    private productModel: typeof Product,
+    @InjectModel(Restaurant)
+    private restaurantModel: typeof Restaurant,
+  ) {}
+
+  async findAllByRestaurant(restaurantId: number): Promise<Product[]> {
+    return this.productModel.findAll({
+      where: { restaurantId, disponivel: true },
+    });
+  }
+
+  async findOne(id: number): Promise<Product> {
+    const product = await this.productModel.findByPk(id);
+    if (!product) throw new NotFoundException('Produto não encontrado');
+    return product;
+  }
+
+  async create(createDto: CreateProductDto, userId: number): Promise<Product> {
+    const restaurant = await this.restaurantModel.findByPk(
+      createDto.restaurantId,
+    );
+    if (!restaurant) throw new NotFoundException('Restaurante não encontrado');
+    if (restaurant.userId !== userId) {
+      throw new ForbiddenException('Você não é o dono deste restaurante');
+    }
+    return this.productModel.create({ ...createDto });
+  }
+
+  async update(
+    id: number,
+    updateDto: UpdateProductDto,
+    restaurantId: number,
+  ): Promise<Product> {
+    const product = await this.findOne(id);
+
+    if (product.restaurantId !== restaurantId) {
+      throw new ForbiddenException(
+        'Você não tem permissão para editar este produto',
+      );
+    }
+
+    await product.update(updateDto);
+    return product;
+  }
+
+  async remove(id: number, restaurantId: number): Promise<void> {
+    const product = await this.findOne(id);
+    if (product.restaurantId !== restaurantId) {
+      throw new ForbiddenException(
+        'Você não tem permissão para excluir este produto',
+      );
+    }
+    await product.destroy();
+  }
+}
+```
+
+**5. Criar `src/products/products.controller.ts`**
+
+```typescript
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Patch,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { AuthGuard } from '../auth/auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
+import { UserRole } from '../users/userType';
+import { ProductsService } from './products.service';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+
+@ApiTags('Produtos')
+@Controller('products')
+export class ProductsController {
+  constructor(private readonly productsService: ProductsService) {}
+
+  @ApiOperation({ summary: 'Listar produtos de um restaurante' })
+  @ApiResponse({ status: 200, description: 'Lista de produtos.' })
+  @Get('restaurant/:restaurantId')
+  findAllByRestaurant(@Param('restaurantId') restaurantId: string) {
+    return this.productsService.findAllByRestaurant(+restaurantId);
+  }
+
+  @ApiOperation({ summary: 'Obter detalhes de um produto' })
+  @ApiResponse({ status: 200, description: 'Detalhes do produto.' })
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.productsService.findOne(+id);
+  }
+
+  @ApiBearerAuth()
+  @Roles(UserRole.RESTAURANT, UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Criar um novo produto' })
+  @ApiResponse({ status: 201, description: 'Produto criado.' })
+  @Post()
+  create(@Body() createDto: CreateProductDto, @Request() req) {
+    return this.productsService.create(createDto, req.user.sub);
+  }
+
+  @ApiBearerAuth()
+  @Roles(UserRole.RESTAURANT, UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Atualizar um produto existente' })
+  @ApiResponse({ status: 200, description: 'Produto atualizado.' })
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateProductDto,
+    @Request() req,
+  ) {
+    return this.productsService.update(+id, updateDto, req.user.sub);
+  }
+
+  @ApiBearerAuth()
+  @Roles(UserRole.RESTAURANT, UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Excluir um produto' })
+  @ApiResponse({ status: 204, description: 'Produto excluído.' })
+  @Delete(':id')
+  remove(@Param('id') id: string, @Request() req) {
+    return this.productsService.remove(+id, req.user.sub);
+  }
+}
+```
+
+**6. Criar `src/products/products.module.ts`**
+
+```typescript
+import { Module } from '@nestjs/common';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { Product } from '../models/product.model';
+import { ProductsController } from './products.controller';
+import { ProductsService } from './products.service';
+import { Restaurant } from '../models/restaurant.model';
+
+@Module({
+  imports: [SequelizeModule.forFeature([Product, Restaurant])],
+  controllers: [ProductsController],
+  providers: [ProductsService],
+})
+export class ProductsModule {}
+```
 
 ### Conceito ensinado
 
@@ -704,38 +964,175 @@ export class PaginationDto {
 **2. Usar paginação no service:**
 
 ```typescript
-async findAll(pagination: PaginationDto) {
-  const { page, limit } = pagination;
-  const offset = (page - 1) * limit;
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Order } from '../models/order.model';
+import { OrderItem } from '../models/order-item.model';
+import { Product } from '../models/product.model';
+import { OrderStatus } from './order-status.enum';
+import { CreateOrderDto } from './dto/create-order.dto';
+import { UserRole } from '../users/userType';
+import { PaginationDto } from '../common/dto/pagination.dto.ts';
 
-  const { count, rows } = await this.orderModel.findAndCountAll({
-    limit,
-    offset,
-    include: ['customer', 'restaurant'],
-    order: [['createdAt', 'DESC']],
-  });
+// Define quais transições de status são permitidas e por qual role
+const STATUS_TRANSITIONS: Record<
+  OrderStatus,
+  { next: OrderStatus; allowedRole: UserRole }[]
+> = {
+  [OrderStatus.PENDING]: [
+    { next: OrderStatus.ACCEPTED, allowedRole: UserRole.RESTAURANT },
+    { next: OrderStatus.REJECTED, allowedRole: UserRole.RESTAURANT },
+    { next: OrderStatus.CANCELLED, allowedRole: UserRole.CUSTOMER },
+  ],
+  [OrderStatus.ACCEPTED]: [
+    { next: OrderStatus.PREPARING, allowedRole: UserRole.RESTAURANT },
+    { next: OrderStatus.CANCELLED, allowedRole: UserRole.RESTAURANT },
+  ],
+  [OrderStatus.PREPARING]: [
+    { next: OrderStatus.OUT_FOR_DELIVERY, allowedRole: UserRole.DELIVERY },
+  ],
+  [OrderStatus.OUT_FOR_DELIVERY]: [
+    { next: OrderStatus.DELIVERED, allowedRole: UserRole.DELIVERY },
+  ],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.REJECTED]: [],
+  [OrderStatus.CANCELLED]: [],
+};
 
-  return {
-    data: rows,
-    meta: {
-      total: count,
-      page,
+@Injectable()
+export class OrdersService {
+  constructor(
+    @InjectModel(Order) private orderModel: typeof Order,
+    @InjectModel(OrderItem) private orderItemModel: typeof OrderItem,
+    @InjectModel(Product) private productModel: typeof Product,
+  ) {}
+
+  async create(
+    createOrderDto: CreateOrderDto,
+    customerId: number,
+  ): Promise<Order> {
+    let total = 0;
+    const itemsToCreate = [];
+
+    for (const item of createOrderDto.items) {
+      const product = await this.productModel.findByPk(item.productId);
+      if (!product || !product.disponivel) {
+        throw new BadRequestException(
+          `Produto ${item.productId} não está disponível`,
+        );
+      }
+
+      const precoUnitario = Number(product.preco);
+      total += precoUnitario * item.quantidade;
+      itemsToCreate.push({
+        productId: item.productId,
+        quantidade: item.quantidade,
+        precoUnitario,
+      });
+    }
+
+    const order = await this.orderModel.create({
+      customerId,
+      restaurantId: createOrderDto.restaurantId,
+      enderecoEntrega: createOrderDto.enderecoEntrega,
+      observacao: createOrderDto.observacao,
+      total,
+      status: OrderStatus.PENDING,
+    });
+
+    for (const item of itemsToCreate) {
+      await this.orderItemModel.create({ ...item, orderId: order.id });
+    }
+
+    return this.findOne(order.id);
+  }
+
+  async findOne(id: number): Promise<Order> {
+    const order = await this.orderModel.findByPk(id, {
+      include: ['items', 'customer', 'restaurant'],
+    });
+    if (!order) throw new NotFoundException('Pedido não encontrado');
+    return order;
+  }
+
+  async updateStatus(
+    orderId: number,
+    newStatus: OrderStatus,
+    userId: number,
+    userRole: UserRole,
+  ): Promise<Order> {
+    const order = await this.findOne(orderId);
+
+    const allowedTransitions = STATUS_TRANSITIONS[order.status];
+    const transition = allowedTransitions.find((t) => t.next === newStatus);
+
+    if (!transition) {
+      throw new BadRequestException(
+        `Não é possível mudar status de "${order.status}" para "${newStatus}"`,
+      );
+    }
+
+    if (transition.allowedRole !== userRole && userRole !== UserRole.ADMIN) {
+      throw new ForbiddenException(
+        `Apenas "${transition.allowedRole}" pode fazer esta transição`,
+      );
+    }
+
+    await order.update({ status: newStatus });
+    return order;
+  }
+
+  async findAll(pagination: PaginationDto) {
+    const { page, limit } = pagination;
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await this.orderModel.findAndCountAll({
       limit,
-      totalPages: Math.ceil(count / limit),
-    },
-  };
+      offset,
+      include: ['customer', 'restaurant'],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total: count,
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
 }
+
 ```
 
-**3. Usar no controller com `@Query()`:**
+**3. Criar `src/orders/orders.controller.ts`:**
 
 ```typescript
-@Get()
-findAll(@Query() pagination: PaginationDto) {
-  return this.ordersService.findAll(pagination);
+import { Controller, Get, Query } from '@nestjs/common';
+import { OrdersService } from './orders.service';
+import { PaginationDto } from '../common/dto/pagination.dto';
+import { ApiTags, ApiOperation ,ApiResponse} from '@nestjs/swagger';
+
+@ApiTags('Pedidos')
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  @ApiOperation({ summary: 'Listar pedidos com paginação' })
+  @ApiResponse({ status: 200, description: 'Lista de pedidos paginada.' })
+  @Get()
+  findAll(@Query() pagination: PaginationDto) {
+    return this.ordersService.findAll(pagination);
+  }
 }
 ```
-
 ### Formato de resposta paginada
 
 ```json
@@ -748,6 +1145,64 @@ findAll(@Query() pagination: PaginationDto) {
     "totalPages": 15
   }
 }
+```
+
+** 4 Criar `src/orders/orders.module.ts` e registrar os models necessários.**
+```
+import { Module } from '@nestjs/common';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { Order } from '../models/order.model';
+import { OrderItem } from '../models/order-item.model';
+import { Product } from '../models/product.model';
+import { OrdersController } from './orders.controller';
+import { OrdersService } from './orders.service';
+
+@Module({
+  imports: [SequelizeModule.forFeature([Order, OrderItem, Product])],
+  controllers: [OrdersController],
+  providers: [OrdersService],
+})
+export class OrdersModule {}
+```
+
+**5. Registrar `OrdersModule` , `ProductsModule` e `RestaurantsModule` no `AppModule`.**
+
+```typescript
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { User } from './models/user.model';
+import { UsersModule } from './users/users.module';
+import { LoginModule } from './login/login.module';
+import { Restaurant } from './models/restaurant.model';
+import { Product } from './models/product.model';
+import { Order } from './models/order.model';
+import { OrderItem } from './models/order-item.model';
+import { RestaurantsModule } from './restaurants/restaurants.module';
+import { ProductsModule } from './products/products.module';
+import { OrdersModule } from './orders/orders.module';
+
+
+@Module({
+  imports: [
+    SequelizeModule.forRoot({
+      dialect: 'sqlite',
+      storage: './database.sqlite',
+      autoLoadModels: true,
+      synchronize: true,
+      models: [User, Restaurant, Product, Order, OrderItem],
+    }),
+    UsersModule,
+    LoginModule,
+    RestaurantsModule,
+    ProductsModule,
+    OrdersModule
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
 ```
 
 ### Conceito ensinado

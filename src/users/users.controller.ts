@@ -1,8 +1,9 @@
-import { Get, Post, Body, Controller, UseGuards } from '@nestjs/common';
+import { Get, Post, Body, Controller, UseGuards, Param, Delete, Patch } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { User } from '../models/user.model';
 import { AuthGuard } from '../auth/auth.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -24,12 +25,18 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
-
-  @ApiOperation({ summary: 'Criar um novo usuário' })
-  @ApiResponse({ status: 201, description: 'Usuário criado com sucesso' })
-  @ApiResponse({ status: 400, description: 'Dados inválidos' })
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+    return this.usersService.update(+id, updateUserDto);
+  }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.usersService.remove(+id);
   }
 }

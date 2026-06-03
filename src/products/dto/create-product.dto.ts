@@ -21,7 +21,6 @@ export class CreateProductDto {
   @IsOptional()
   imagemUrl?: string;
 
-  @ApiProperty({ example: true, default: true })
   disponivel?: boolean;
 
   @ApiProperty({ example: 1 })

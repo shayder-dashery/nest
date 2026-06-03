@@ -142,4 +142,87 @@ export class OrdersService {
       },
     };
   }
+
+  // cancelar pedido (apenas cliente pode cancelar se estiver PENDING ou ACCEPTED)
+  async cancelOrder(orderId: number, userId: number): Promise<Order> {
+    const order = await this.findOne(orderId);
+
+    if (order.customerId !== userId) {
+      throw new ForbiddenException('Você só pode cancelar seus próprios pedidos');
+    }
+    
+    if (
+      order.status !== OrderStatus.PENDING &&
+      order.status !== OrderStatus.ACCEPTED
+    ) {
+      throw new BadRequestException(
+        'Só é possível cancelar pedidos que estão PENDING ou ACCEPTED',
+      );
+    }
+
+    await order.update({ status: OrderStatus.CANCELLED });
+    return order;
+  }
+
+  // encontrar pedidos por restaurante com filtro (padrão listado é todos)
+  async findByRestaurant(
+    restaurantId: number,
+    status?: OrderStatus,
+    pagination?: PaginationDto,
+  ) {
+    const { page = 1, limit = 10 } = pagination || {};
+    const offset = (page - 1) * limit;
+
+    const where: any = { restaurantId };
+    if (status) where.status = status;
+
+    const { count, rows } = await this.orderModel.findAndCountAll({
+      where,
+      limit,
+      offset,
+      include: ['customer', 'items'],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total: count,
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
+
+  // encontrar pedidos por cliente com filtro (padrão listado é todos)
+  async findByCustomer(
+    customerId: number,
+    pagination: PaginationDto,
+    status?: OrderStatus,
+  ) {
+    const { page = 1, limit = 10 } = pagination;
+    const offset = (page - 1) * limit;
+
+    const where: any = { customerId };
+    if (status) where.status = status;
+
+    const { count, rows } = await this.orderModel.findAndCountAll({
+      where,
+      limit,
+      offset,
+      include: ['restaurant', 'items'],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total: count,
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
 }

@@ -407,8 +407,11 @@ export class CreateProductDto {
   @IsOptional()
   imagemUrl?: string;
 
-  @ApiProperty({ example: true, default: true })
   disponivel?: boolean;
+
+  @ApiProperty({ example: 1 })
+  @IsNumber()
+  restaurantId: number;
 }
 ```
 
@@ -746,6 +749,7 @@ import { Product } from '../models/product.model';
 import { OrderStatus } from './order-status.enum';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UserRole } from '../users/userType';
+import { PaginationDto } from '../common/dto/pagination.dto';
 
 // Define quais transições de status são permitidas e por qual role
 const STATUS_TRANSITIONS: Record<
@@ -854,7 +858,113 @@ export class OrdersService {
     await order.update({ status: newStatus });
     return order;
   }
+
+  async findAll(pagination: PaginationDto) {
+    const { page, limit } = pagination;
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await this.orderModel.findAndCountAll({
+      limit,
+      offset,
+      include: ['customer', 'restaurant'],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total: count,
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
+
+  // cancelar pedido (apenas cliente pode cancelar se estiver PENDING ou ACCEPTED)
+  async cancelOrder(orderId: number, userId: number): Promise<Order> {
+    const order = await this.findOne(orderId);
+
+    if (order.customerId !== userId) {
+      throw new ForbiddenException('Você só pode cancelar seus próprios pedidos');
+    }
+    
+    if (
+      order.status !== OrderStatus.PENDING &&
+      order.status !== OrderStatus.ACCEPTED
+    ) {
+      throw new BadRequestException(
+        'Só é possível cancelar pedidos que estão PENDING ou ACCEPTED',
+      );
+    }
+
+    await order.update({ status: OrderStatus.CANCELLED });
+    return order;
+  }
+
+  // encontrar pedidos por restaurante com filtro (padrão listado é todos)
+  async findByRestaurant(
+    restaurantId: number,
+    status?: OrderStatus,
+    pagination?: PaginationDto,
+  ) {
+    const { page = 1, limit = 10 } = pagination || {};
+    const offset = (page - 1) * limit;
+
+    const where: any = { restaurantId };
+    if (status) where.status = status;
+
+    const { count, rows } = await this.orderModel.findAndCountAll({
+      where,
+      limit,
+      offset,
+      include: ['customer', 'items'],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total: count,
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
+
+  // encontrar pedidos por cliente com filtro (padrão listado é todos)
+  async findByCustomer(
+    customerId: number,
+    pagination: PaginationDto,
+    status?: OrderStatus,
+  ) {
+    const { page = 1, limit = 10 } = pagination;
+    const offset = (page - 1) * limit;
+
+    const where: any = { customerId };
+    if (status) where.status = status;
+
+    const { count, rows } = await this.orderModel.findAndCountAll({
+      where,
+      limit,
+      offset,
+      include: ['restaurant', 'items'],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total: count,
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
 }
+
 ```
 
 ### Conceito ensinado
@@ -1115,10 +1225,14 @@ export class OrdersService {
 **3. Criar `src/orders/orders.controller.ts`:**
 
 ```typescript
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Patch, Body, Param, UseGuards, Request, Post } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { PaginationDto } from '../common/dto/pagination.dto';
-import { ApiTags, ApiOperation ,ApiResponse} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { OrderStatus } from './order-status.enum';
+import { UserRole } from '../users/userType';
+import { AuthGuard } from '../auth/auth.guard';
+import { CreateOrderDto } from './dto/create-order.dto';
 
 @ApiTags('Pedidos')
 @Controller('orders')
@@ -1131,7 +1245,84 @@ export class OrdersController {
   findAll(@Query() pagination: PaginationDto) {
     return this.ordersService.findAll(pagination);
   }
+
+  @ApiOperation({ summary: 'Obter detalhes de um pedido' })
+  @ApiResponse({ status: 200, description: 'Detalhes do pedido.' })
+  @Get(':id')
+  findOne(@Query('id') id: number) {
+    return this.ordersService.findOne(id);
+  }
+
+  @ApiOperation({ summary: 'Atualizar status de um pedido' })
+  @ApiResponse({ status: 200, description: 'Status do pedido atualizado.' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Patch(':id/status')
+  updateStatus(
+    @Param('id') id: string,
+    @Body('newStatus') newStatus: OrderStatus,
+    @Request() req,
+  ) {
+    return this.ordersService.updateStatus(
+      +id,
+      newStatus,
+      req.user.sub,
+      req.user.role,
+    );
+  }
+
+  @ApiOperation({ summary: 'Criar um novo pedido' })
+  @ApiResponse({ status: 201, description: 'Pedido criado com sucesso.' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Post()
+  create(@Body() createOrderDto: CreateOrderDto, @Request() req) {
+    return this.ordersService.create(createOrderDto, req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Cancelar um pedido' })
+  @ApiResponse({ status: 200, description: 'Pedido cancelado com sucesso.' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Patch(':id/cancel')
+  cancelOrder(@Param('id') id: string, @Request() req) {
+    return this.ordersService.cancelOrder(+id, req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Listar pedidos de um restaurante' })
+  @ApiResponse({ status: 200, description: 'Lista de pedidos do restaurante.' })
+  @Get('restaurant/:id')
+  findByRestaurant(
+    @Param('id') id: string,
+    @Query('status') status?: OrderStatus,
+    @Query() pagination?: PaginationDto,
+  ) {
+    return this.ordersService.findByRestaurant(+id, status, pagination);
+  }
+
+  @ApiOperation({ summary: 'Listar meus pedidos' })
+  @ApiResponse({ status: 200, description: 'Sua lista de pedidos.' })
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard)
+  @Get('customer')
+  findByCustomer(
+    @Request() req,
+    @Query() pagination: PaginationDto,
+    @Query('status') status?: OrderStatus) {
+    return this.ordersService.findByCustomer(req.user.sub, pagination, status);
+  }
+
+  @ApiOperation({ summary: 'Listar pedidos de um cliente' })
+  @ApiResponse({ status: 200, description: 'Lista de pedidos do cliente.' })
+  @Get('customer/:id')
+  findByCustomerId(
+    @Param('id') id: string,
+    @Query() pagination: PaginationDto,
+    @Query('status') status?: OrderStatus) {
+    return this.ordersService.findByCustomer(+id, pagination, status);
+    }
 }
+
 ```
 ### Formato de resposta paginada
 
@@ -1148,7 +1339,7 @@ export class OrdersController {
 ```
 
 ** 4 Criar `src/orders/orders.module.ts` e registrar os models necessários.**
-```
+```typescript
 import { Module } from '@nestjs/common';
 import { SequelizeModule } from '@nestjs/sequelize';
 import { Order } from '../models/order.model';
@@ -1203,6 +1394,58 @@ import { OrdersModule } from './orders/orders.module';
   providers: [AppService],
 })
 export class AppModule {}
+```
+
+**6. Registrar `role` do usuário no token JWT para que o serviço de Orders possa validar as transições de status. `src/login/login.service.ts`**
+
+```typescript
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import * as bcrypt from 'bcrypt';
+import { User } from '../models/user.model';
+import { JwtService } from '@nestjs/jwt';
+import { LoginDto } from './dto/login.dto';
+
+@Injectable()
+export class LoginService {
+  constructor(
+    @InjectModel(User) private userModel: typeof User,
+    private jwtService: JwtService,
+  ) {}
+
+  async login(loginDto: LoginDto): Promise<{
+    message: string;
+    status: string;
+    access_token: string;
+  }> {
+    const { email, password } = loginDto;
+
+    const findOneByEmail = async (email: string): Promise<User | null> => {
+      return this.userModel.findOne({ where: { email } });
+    };
+
+    const user = await findOneByEmail(email);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.senha);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid password');
+    }
+
+    const payload = { sub: user.id, email: user.email, role: user.role };
+    return {
+      message: 'Login successful',
+      status: 'success',
+      access_token: await this.jwtService.signAsync(payload),
+    };
+  }
+}
 ```
 
 ### Conceito ensinado

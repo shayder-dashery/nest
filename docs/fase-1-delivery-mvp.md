@@ -381,9 +381,216 @@ export class Product extends Model {
 }
 ```
 
-**2. Criar o módulo `Products` seguindo a mesma estrutura do `Restaurants`.**
+**2. Criar /src/products/dto/create-product.dto.ts:**
 
-> Desafio para os alunos: implementar o CRUD de `Product` com base no que foi feito para `Restaurant`.
+```typescript
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+
+export class CreateProductDto {
+  @ApiProperty({ example: 'Pizza Margherita' })
+  @IsString()
+  @IsNotEmpty()
+  nome: string;
+
+  @ApiProperty({ example: 'Tomate, mussarela e manjericão', required: false })
+  @IsString()
+  @IsOptional()
+  descricao?: string;
+
+  @ApiProperty({ example: 29.90 })
+  @IsNumber()
+  preco: number;
+
+  @ApiProperty({ example: 'http://example.com/pizza.jpg', required: false })
+  @IsString()
+  @IsOptional()
+  imagemUrl?: string;
+
+  @ApiProperty({ example: true, default: true })
+  disponivel?: boolean;
+}
+```
+
+**3. Criar `src/products/dto/update-product.dto.ts`:**
+
+```typescript
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateProductDto } from './create-product.dto';
+
+export class UpdateProductDto extends PartialType(CreateProductDto) {}
+```
+
+**4 Criar `src/products/products.service.ts`**
+
+```typescript
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Product } from '../models/product.model';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+import { Restaurant } from '../models/restaurant.model';
+
+@Injectable()
+export class ProductsService {
+  constructor(
+    @InjectModel(Product)
+    private productModel: typeof Product,
+    @InjectModel(Restaurant)
+    private restaurantModel: typeof Restaurant,
+  ) {}
+
+  async findAllByRestaurant(restaurantId: number): Promise<Product[]> {
+    return this.productModel.findAll({
+      where: { restaurantId, disponivel: true },
+    });
+  }
+
+  async findOne(id: number): Promise<Product> {
+    const product = await this.productModel.findByPk(id);
+    if (!product) throw new NotFoundException('Produto não encontrado');
+    return product;
+  }
+
+  async create(createDto: CreateProductDto, userId: number): Promise<Product> {
+    const restaurant = await this.restaurantModel.findByPk(
+      createDto.restaurantId,
+    );
+    if (!restaurant) throw new NotFoundException('Restaurante não encontrado');
+    if (restaurant.userId !== userId) {
+      throw new ForbiddenException('Você não é o dono deste restaurante');
+    }
+    return this.productModel.create({ ...createDto });
+  }
+
+  async update(
+    id: number,
+    updateDto: UpdateProductDto,
+    restaurantId: number,
+  ): Promise<Product> {
+    const product = await this.findOne(id);
+
+    if (product.restaurantId !== restaurantId) {
+      throw new ForbiddenException(
+        'Você não tem permissão para editar este produto',
+      );
+    }
+
+    await product.update(updateDto);
+    return product;
+  }
+
+  async remove(id: number, restaurantId: number): Promise<void> {
+    const product = await this.findOne(id);
+    if (product.restaurantId !== restaurantId) {
+      throw new ForbiddenException(
+        'Você não tem permissão para excluir este produto',
+      );
+    }
+    await product.destroy();
+  }
+}
+```
+
+**5. Criar `src/products/products.controller.ts`**
+
+```typescript
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Patch,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { AuthGuard } from '../auth/auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
+import { UserRole } from '../users/userType';
+import { ProductsService } from './products.service';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+
+@ApiTags('Produtos')
+@Controller('products')
+export class ProductsController {
+  constructor(private readonly productsService: ProductsService) {}
+
+  @ApiOperation({ summary: 'Listar produtos de um restaurante' })
+  @ApiResponse({ status: 200, description: 'Lista de produtos.' })
+  @Get('restaurant/:restaurantId')
+  findAllByRestaurant(@Param('restaurantId') restaurantId: string) {
+    return this.productsService.findAllByRestaurant(+restaurantId);
+  }
+
+  @ApiOperation({ summary: 'Obter detalhes de um produto' })
+  @ApiResponse({ status: 200, description: 'Detalhes do produto.' })
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.productsService.findOne(+id);
+  }
+
+  @ApiBearerAuth()
+  @Roles(UserRole.RESTAURANT, UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Criar um novo produto' })
+  @ApiResponse({ status: 201, description: 'Produto criado.' })
+  @Post()
+  create(@Body() createDto: CreateProductDto, @Request() req) {
+    return this.productsService.create(createDto, req.user.sub);
+  }
+
+  @ApiBearerAuth()
+  @Roles(UserRole.RESTAURANT, UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Atualizar um produto existente' })
+  @ApiResponse({ status: 200, description: 'Produto atualizado.' })
+  @Patch(':id')
+  update(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateProductDto,
+    @Request() req,
+  ) {
+    return this.productsService.update(+id, updateDto, req.user.sub);
+  }
+
+  @ApiBearerAuth()
+  @Roles(UserRole.RESTAURANT, UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Excluir um produto' })
+  @ApiResponse({ status: 204, description: 'Produto excluído.' })
+  @Delete(':id')
+  remove(@Param('id') id: string, @Request() req) {
+    return this.productsService.remove(+id, req.user.sub);
+  }
+}
+```
+
+**6. Criar `src/products/products.module.ts`**
+
+```typescript
+import { Module } from '@nestjs/common';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { Product } from '../models/product.model';
+import { ProductsController } from './products.controller';
+import { ProductsService } from './products.service';
+import { Restaurant } from '../models/restaurant.model';
+
+@Module({
+  imports: [SequelizeModule.forFeature([Product, Restaurant])],
+  controllers: [ProductsController],
+  providers: [ProductsService],
+})
+export class ProductsModule {}
+```
 
 ### Conceito ensinado
 
@@ -958,9 +1165,9 @@ import { OrdersService } from './orders.service';
 export class OrdersModule {}
 ```
 
-**5. Registrar `OrdersModule` e `RestaurantsModule` no `AppModule`.**
+**5. Registrar `OrdersModule` , `ProductsModule` e `RestaurantsModule` no `AppModule`.**
 
-```
+```typescript
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -973,7 +1180,9 @@ import { Product } from './models/product.model';
 import { Order } from './models/order.model';
 import { OrderItem } from './models/order-item.model';
 import { RestaurantsModule } from './restaurants/restaurants.module';
+import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
+
 
 @Module({
   imports: [
@@ -987,6 +1196,7 @@ import { OrdersModule } from './orders/orders.module';
     UsersModule,
     LoginModule,
     RestaurantsModule,
+    ProductsModule,
     OrdersModule
   ],
   controllers: [AppController],

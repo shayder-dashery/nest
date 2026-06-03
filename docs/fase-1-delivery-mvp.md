@@ -85,8 +85,35 @@ export class Restaurant extends Model {
 **2. Registrar no `AppModule` (array `models` do SequelizeModule):**
 
 ```typescript
-// src/app.module.ts
-models: [User, Restaurant, Product, Order, OrderItem],
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { User } from './models/user.model';
+import { UsersModule } from './users/users.module';
+import { LoginModule } from './login/login.module';
+import { Restaurant } from './models/restaurant.model';
+import { Product } from './models/product.model';
+import { Order } from './models/order.model';
+import { OrderItem } from './models/order-item.model';
+
+@Module({
+  imports: [
+    SequelizeModule.forRoot({
+      dialect: 'sqlite',
+      storage: './database.sqlite',
+      autoLoadModels: true,
+      synchronize: true,
+      models: [User, Restaurant, Product, Order, OrderItem],
+    }),
+    UsersModule,
+    LoginModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+
 ```
 
 ### Conceito ensinado
@@ -140,6 +167,15 @@ export class CreateRestaurantDto {
   @IsOptional()
   descricao?: string;
 }
+```
+
+**1.2. Criar `src/restaurants/dto/update-restaurant.dto.ts`:**
+
+```typescript
+import { PartialType } from '@nestjs/mapped-types';
+import { CreateRestaurantDto } from './create-restaurant.dto';
+
+export class UpdateRestaurantDto extends PartialType(CreateRestaurantDto) {}
 ```
 
 **2. Criar `src/restaurants/restaurants.service.ts`:**
@@ -275,6 +311,23 @@ export class RestaurantsController {
     return this.restaurantsService.remove(+id, req.user.sub);
   }
 }
+```
+
+**4. Criar `src/restaurants/restaurants.module.ts`:**
+
+```typescript
+import { Module } from '@nestjs/common';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { Restaurant } from '../models/restaurant.model';
+import { RestaurantsController } from './restaurants.controller';
+import { RestaurantsService } from './restaurants.service';
+
+@Module({
+  imports: [SequelizeModule.forFeature([Restaurant])],
+  controllers: [RestaurantsController],
+  providers: [RestaurantsService],
+})
+export class RestaurantsModule {}
 ```
 
 ### Conceito ensinado
@@ -704,38 +757,175 @@ export class PaginationDto {
 **2. Usar paginação no service:**
 
 ```typescript
-async findAll(pagination: PaginationDto) {
-  const { page, limit } = pagination;
-  const offset = (page - 1) * limit;
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
+import { InjectModel } from '@nestjs/sequelize';
+import { Order } from '../models/order.model';
+import { OrderItem } from '../models/order-item.model';
+import { Product } from '../models/product.model';
+import { OrderStatus } from './order-status.enum';
+import { CreateOrderDto } from './dto/create-order.dto';
+import { UserRole } from '../users/userType';
+import { PaginationDto } from '../common/dto/pagination.dto.ts';
 
-  const { count, rows } = await this.orderModel.findAndCountAll({
-    limit,
-    offset,
-    include: ['customer', 'restaurant'],
-    order: [['createdAt', 'DESC']],
-  });
+// Define quais transições de status são permitidas e por qual role
+const STATUS_TRANSITIONS: Record<
+  OrderStatus,
+  { next: OrderStatus; allowedRole: UserRole }[]
+> = {
+  [OrderStatus.PENDING]: [
+    { next: OrderStatus.ACCEPTED, allowedRole: UserRole.RESTAURANT },
+    { next: OrderStatus.REJECTED, allowedRole: UserRole.RESTAURANT },
+    { next: OrderStatus.CANCELLED, allowedRole: UserRole.CUSTOMER },
+  ],
+  [OrderStatus.ACCEPTED]: [
+    { next: OrderStatus.PREPARING, allowedRole: UserRole.RESTAURANT },
+    { next: OrderStatus.CANCELLED, allowedRole: UserRole.RESTAURANT },
+  ],
+  [OrderStatus.PREPARING]: [
+    { next: OrderStatus.OUT_FOR_DELIVERY, allowedRole: UserRole.DELIVERY },
+  ],
+  [OrderStatus.OUT_FOR_DELIVERY]: [
+    { next: OrderStatus.DELIVERED, allowedRole: UserRole.DELIVERY },
+  ],
+  [OrderStatus.DELIVERED]: [],
+  [OrderStatus.REJECTED]: [],
+  [OrderStatus.CANCELLED]: [],
+};
 
-  return {
-    data: rows,
-    meta: {
-      total: count,
-      page,
+@Injectable()
+export class OrdersService {
+  constructor(
+    @InjectModel(Order) private orderModel: typeof Order,
+    @InjectModel(OrderItem) private orderItemModel: typeof OrderItem,
+    @InjectModel(Product) private productModel: typeof Product,
+  ) {}
+
+  async create(
+    createOrderDto: CreateOrderDto,
+    customerId: number,
+  ): Promise<Order> {
+    let total = 0;
+    const itemsToCreate = [];
+
+    for (const item of createOrderDto.items) {
+      const product = await this.productModel.findByPk(item.productId);
+      if (!product || !product.disponivel) {
+        throw new BadRequestException(
+          `Produto ${item.productId} não está disponível`,
+        );
+      }
+
+      const precoUnitario = Number(product.preco);
+      total += precoUnitario * item.quantidade;
+      itemsToCreate.push({
+        productId: item.productId,
+        quantidade: item.quantidade,
+        precoUnitario,
+      });
+    }
+
+    const order = await this.orderModel.create({
+      customerId,
+      restaurantId: createOrderDto.restaurantId,
+      enderecoEntrega: createOrderDto.enderecoEntrega,
+      observacao: createOrderDto.observacao,
+      total,
+      status: OrderStatus.PENDING,
+    });
+
+    for (const item of itemsToCreate) {
+      await this.orderItemModel.create({ ...item, orderId: order.id });
+    }
+
+    return this.findOne(order.id);
+  }
+
+  async findOne(id: number): Promise<Order> {
+    const order = await this.orderModel.findByPk(id, {
+      include: ['items', 'customer', 'restaurant'],
+    });
+    if (!order) throw new NotFoundException('Pedido não encontrado');
+    return order;
+  }
+
+  async updateStatus(
+    orderId: number,
+    newStatus: OrderStatus,
+    userId: number,
+    userRole: UserRole,
+  ): Promise<Order> {
+    const order = await this.findOne(orderId);
+
+    const allowedTransitions = STATUS_TRANSITIONS[order.status];
+    const transition = allowedTransitions.find((t) => t.next === newStatus);
+
+    if (!transition) {
+      throw new BadRequestException(
+        `Não é possível mudar status de "${order.status}" para "${newStatus}"`,
+      );
+    }
+
+    if (transition.allowedRole !== userRole && userRole !== UserRole.ADMIN) {
+      throw new ForbiddenException(
+        `Apenas "${transition.allowedRole}" pode fazer esta transição`,
+      );
+    }
+
+    await order.update({ status: newStatus });
+    return order;
+  }
+
+  async findAll(pagination: PaginationDto) {
+    const { page, limit } = pagination;
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await this.orderModel.findAndCountAll({
       limit,
-      totalPages: Math.ceil(count / limit),
-    },
-  };
+      offset,
+      include: ['customer', 'restaurant'],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total: count,
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    };
+  }
 }
+
 ```
 
-**3. Usar no controller com `@Query()`:**
+**3. Criar `src/orders/orders.controller.ts`:**
 
 ```typescript
-@Get()
-findAll(@Query() pagination: PaginationDto) {
-  return this.ordersService.findAll(pagination);
+import { Controller, Get, Query } from '@nestjs/common';
+import { OrdersService } from './orders.service';
+import { PaginationDto } from '../common/dto/pagination.dto';
+import { ApiTags, ApiOperation ,ApiResponse} from '@nestjs/swagger';
+
+@ApiTags('Pedidos')
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  @ApiOperation({ summary: 'Listar pedidos com paginação' })
+  @ApiResponse({ status: 200, description: 'Lista de pedidos paginada.' })
+  @Get()
+  findAll(@Query() pagination: PaginationDto) {
+    return this.ordersService.findAll(pagination);
+  }
 }
 ```
-
 ### Formato de resposta paginada
 
 ```json
@@ -748,6 +938,61 @@ findAll(@Query() pagination: PaginationDto) {
     "totalPages": 15
   }
 }
+```
+
+** 4 Criar `src/orders/orders.module.ts` e registrar os models necessários.**
+```
+import { Module } from '@nestjs/common';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { Order } from '../models/order.model';
+import { OrderItem } from '../models/order-item.model';
+import { Product } from '../models/product.model';
+import { OrdersController } from './orders.controller';
+import { OrdersService } from './orders.service';
+
+@Module({
+  imports: [SequelizeModule.forFeature([Order, OrderItem, Product])],
+  controllers: [OrdersController],
+  providers: [OrdersService],
+})
+export class OrdersModule {}
+```
+
+**5. Registrar `OrdersModule` e `RestaurantsModule` no `AppModule`.**
+
+```
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { SequelizeModule } from '@nestjs/sequelize';
+import { User } from './models/user.model';
+import { UsersModule } from './users/users.module';
+import { LoginModule } from './login/login.module';
+import { Restaurant } from './models/restaurant.model';
+import { Product } from './models/product.model';
+import { Order } from './models/order.model';
+import { OrderItem } from './models/order-item.model';
+import { RestaurantsModule } from './restaurants/restaurants.module';
+import { OrdersModule } from './orders/orders.module';
+
+@Module({
+  imports: [
+    SequelizeModule.forRoot({
+      dialect: 'sqlite',
+      storage: './database.sqlite',
+      autoLoadModels: true,
+      synchronize: true,
+      models: [User, Restaurant, Product, Order, OrderItem],
+    }),
+    UsersModule,
+    LoginModule,
+    RestaurantsModule,
+    OrdersModule
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
 ```
 
 ### Conceito ensinado

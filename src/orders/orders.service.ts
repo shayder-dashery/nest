@@ -12,6 +12,7 @@ import { OrderStatus } from './order-status.enum';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UserRole } from '../users/userType';
 import { PaginationDto } from '../common/dto/pagination.dto';
+import { TrackingGateway } from '../gateways/tracking.gateway';
 
 // Define quais transições de status são permitidas e por qual role
 const STATUS_TRANSITIONS: Record<
@@ -44,6 +45,7 @@ export class OrdersService {
     @InjectModel(Order) private orderModel: typeof Order,
     @InjectModel(OrderItem) private orderItemModel: typeof OrderItem,
     @InjectModel(Product) private productModel: typeof Product,
+    private readonly trackingGateway: TrackingGateway,
   ) {}
 
   async create(
@@ -118,6 +120,7 @@ export class OrdersService {
     }
 
     await order.update({ status: newStatus });
+    this.trackingGateway.notifyOrderStatusChange(orderId, newStatus);
     return order;
   }
 
@@ -161,6 +164,7 @@ export class OrdersService {
     }
 
     await order.update({ status: OrderStatus.CANCELLED });
+    this.trackingGateway.notifyOrderStatusChange(orderId, OrderStatus.CANCELLED);
     return order;
   }
 

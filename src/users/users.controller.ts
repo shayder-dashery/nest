@@ -1,14 +1,18 @@
-import { Get, Post, Body, Controller, UseGuards } from '@nestjs/common';
+import { Get, Post, Body, Controller, UseGuards, Param, Delete, Patch } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { User } from '../models/user.model';
 import { AuthGuard } from '../auth/auth.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
 } from '@nestjs/swagger';
+import { Roles } from 'src/auth/roles.decorator';
+import { UserRole } from './userType';
+import { RolesGuard } from 'src/auth/roles.guard';
 
 @ApiTags('Usuários')
 @Controller('users')
@@ -24,12 +28,21 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
-
-  @ApiOperation({ summary: 'Criar um novo usuário' })
-  @ApiResponse({ status: 201, description: 'Usuário criado com sucesso' })
-  @ApiResponse({ status: 400, description: 'Dados inválidos' })
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
+    return this.usersService.update(+id, updateUserDto);
+  }
+
+  // Rota acessível apenas por admins
+  @Roles(UserRole.ADMIN)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.usersService.remove(+id);
   }
 }

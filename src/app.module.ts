@@ -5,18 +5,22 @@ import { SequelizeModule } from '@nestjs/sequelize';
 import { User } from './models/user.model';
 import { UsersModule } from './users/users.module';
 import { LoginModule } from './login/login.module';
+import { Restaurant } from './models/restaurant.model';
+import { Product } from './models/product.model';
+import { Order } from './models/order.model';
+import { OrderItem } from './models/order-item.model';
 
 @Module({
   imports: [
     SequelizeModule.forRoot({
-        dialect: 'sqlite',
-        storage: './database.sqlite',
-        autoLoadModels: true,
-        synchronize: true,
-        models: [User]
+      dialect: 'sqlite',
+      storage: './database.sqlite',
+      autoLoadModels: true,
+      synchronize: true,
+      models: [User, Restaurant, Product, Order, OrderItem],
     }),
     UsersModule,
-    LoginModule
+    LoginModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+coverage
+.git
+.vscode
+.devcontainer
+.env
+*.log
+database.sqlite

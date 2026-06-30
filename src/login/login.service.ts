@@ -37,7 +37,7 @@ export class LoginService {
       throw new UnauthorizedException('Invalid password');
     }
 
-    const payload = { id: user.id, email: user.email };
+    const payload = { sub: user.id, email: user.email, role: user.role };
     return {
       message: 'Login successful',
       status: 'success',

@@ -48,14 +48,15 @@ Use `.env.example` como referencia.
 - `DB_SYNC`: mantem o Sequelize criando/alterando tabelas automaticamente. Para producao real, prefira migrations e use `false`.
 - `DB_SSL`: use `true` quando conectar em um Postgres que exige SSL.
 - `JWT_SECRET`: segredo usado para assinar tokens.
-- `REDIS_URL`: URL do Redis para futuras filas/cache/sessoes.
+- `REDIS_URL`: URL do Redis para filas/cache/sessoes.
+- `QUEUE_ENABLED`: use `false` para iniciar a API sem BullMQ quando Redis ainda nao estiver configurado.
 
 
 ## Filas com BullMQ
 
 O projeto usa BullMQ com Redis para processar tarefas assincronas. O CRUD principal continua gravando direto no Postgres; depois que um pedido e criado, a API adiciona um job `order.created` na fila `order-events`.
 
-Esse worker hoje registra o evento no log, e pode ser evoluido em aula para enviar notificacoes, e-mails, webhooks, metricas ou outras tarefas que nao precisam bloquear a resposta da API.
+Esse worker hoje registra o evento no log, e pode ser evoluido em aula para enviar notificacoes, e-mails, webhooks, metricas ou outras tarefas que nao precisam bloquear a resposta da API. Em producao, a fila so e ativada automaticamente quando `REDIS_URL` ou `REDIS_HOST` estiver configurado.
 
 ## Deploy no Render
 

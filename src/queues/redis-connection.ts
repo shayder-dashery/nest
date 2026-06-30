@@ -1,5 +1,17 @@
 import { RedisOptions } from 'ioredis';
 
+export function isQueueEnabled(): boolean {
+  if (process.env.QUEUE_ENABLED === 'false') {
+    return false;
+  }
+
+  if (process.env.REDIS_URL || process.env.REDIS_HOST) {
+    return true;
+  }
+
+  return process.env.NODE_ENV !== 'production';
+}
+
 export function getRedisConnectionOptions(): RedisOptions {
   const redisUrl = process.env.REDIS_URL;
 

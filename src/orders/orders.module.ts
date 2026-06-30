@@ -8,13 +8,19 @@ import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrderEventsProcessor } from './order-events.processor';
 import { ORDER_EVENTS_QUEUE } from '../queues/queue-names';
+import { isQueueEnabled } from '../queues/redis-connection';
+
+const queueEnabled = isQueueEnabled();
 
 @Module({
   imports: [
     SequelizeModule.forFeature([Order, OrderItem, Product]),
-    BullModule.registerQueue({ name: ORDER_EVENTS_QUEUE }),
+    ...(queueEnabled ? [BullModule.registerQueue({ name: ORDER_EVENTS_QUEUE })] : []),
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, OrderEventsProcessor],
+  providers: [
+    OrdersService,
+    ...(queueEnabled ? [OrderEventsProcessor] : []),
+  ],
 })
 export class OrdersModule {}

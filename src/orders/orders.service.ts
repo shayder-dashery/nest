@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -47,7 +48,9 @@ export class OrdersService {
     @InjectModel(Order) private orderModel: typeof Order,
     @InjectModel(OrderItem) private orderItemModel: typeof OrderItem,
     @InjectModel(Product) private productModel: typeof Product,
-    @InjectQueue(ORDER_EVENTS_QUEUE) private orderEventsQueue: Queue,
+    @Optional()
+    @InjectQueue(ORDER_EVENTS_QUEUE)
+    private orderEventsQueue?: Queue,
   ) {}
 
   async create(
@@ -87,21 +90,23 @@ export class OrdersService {
       await this.orderItemModel.create({ ...item, orderId: order.id });
     }
 
-    await this.orderEventsQueue.add(
-      'order.created',
-      {
-        orderId: order.id,
-        customerId,
-        restaurantId: createOrderDto.restaurantId,
-        total,
-      },
-      {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: 100,
-        removeOnFail: 1000,
-      },
-    );
+    if (this.orderEventsQueue) {
+      await this.orderEventsQueue.add(
+        'order.created',
+        {
+          orderId: order.id,
+          customerId,
+          restaurantId: createOrderDto.restaurantId,
+          total,
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+          removeOnComplete: 100,
+          removeOnFail: 1000,
+        },
+      );
+    }
 
     return this.findOne(order.id);
   }

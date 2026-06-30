@@ -13,28 +13,57 @@ import { RestaurantsModule } from './restaurants/restaurants.module';
 import { ProductsModule } from './products/products.module';
 import { OrdersModule } from './orders/orders.module';
 import { QueuesModule } from './queues/queues.module';
+import { isQueueEnabled } from './queues/redis-connection';
 
 const isPostgres = process.env.DB_DIALECT === 'postgres' || !!process.env.DATABASE_URL;
 
-const databaseConfig = isPostgres
-  ? {
+function getPostgresConfig() {
+  const databaseUrl = process.env.DATABASE_URL;
+  const shouldUseSsl = process.env.DB_SSL === 'true';
+
+  if (databaseUrl) {
+    const url = new URL(databaseUrl);
+    const sslMode = url.searchParams.get('sslmode');
+    const ssl = shouldUseSsl || sslMode === 'require' || url.searchParams.get('ssl') === 'true';
+
+    return {
       dialect: 'postgres' as const,
-      url: process.env.DATABASE_URL,
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
-      username: process.env.DB_USERNAME,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_DATABASE,
-      dialectOptions:
-        process.env.DB_SSL === 'true'
-          ? {
-              ssl: {
-                require: true,
-                rejectUnauthorized: false,
-              },
-            }
-          : undefined,
-    }
+      host: url.hostname,
+      port: url.port ? Number(url.port) : 5432,
+      username: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      dialectOptions: ssl
+        ? {
+            ssl: {
+              require: true,
+              rejectUnauthorized: false,
+            },
+          }
+        : undefined,
+    };
+  }
+
+  return {
+    dialect: 'postgres' as const,
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432,
+    username: process.env.DB_USERNAME,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_DATABASE,
+    dialectOptions: shouldUseSsl
+      ? {
+          ssl: {
+            require: true,
+            rejectUnauthorized: false,
+          },
+        }
+      : undefined,
+  };
+}
+
+const databaseConfig = isPostgres
+  ? getPostgresConfig()
   : {
       dialect: 'sqlite' as const,
       storage: process.env.SQLITE_STORAGE ?? './database.sqlite',
@@ -42,7 +71,7 @@ const databaseConfig = isPostgres
 
 @Module({
   imports: [
-    QueuesModule,
+    ...(isQueueEnabled() ? [QueuesModule] : []),
     SequelizeModule.forRoot({
       ...databaseConfig,
       autoLoadModels: true,
@@ -53,7 +82,7 @@ const databaseConfig = isPostgres
     LoginModule,
     RestaurantsModule,
     ProductsModule,
-    OrdersModule
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

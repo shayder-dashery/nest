@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "ts-node src/main.ts",
     "dev": "nodemon",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main",
     "test": "jest",
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json"
